@@ -21,7 +21,7 @@ API mirrors `hash/adler32`: `Checksum` and `New` (a `hash.Hash32`).
 
 | arch | kernel | notes |
 |---|---|---|
-| **amd64** | **SSE3/SSSE3** + **AVX2** (runtime dispatch via `x/sys/cpu`) | `PMADDUBSW` weighted sum + `PSADBW` byte sum |
+| **amd64** | **SSE3/SSSE3** (2× unroll) + **AVX2** (4× unroll, runtime dispatch via `x/sys/cpu`) | `PMADDUBSW` weighted sum + `PSADBW` byte sum, deferred `s1` carry |
 | **riscv64** | **RVV** (runtime dispatch via `x/sys/cpu` `HasV`) | length-agnostic `VWMULU` weighted sum + `VWREDSUMU`; scalar fallback without V |
 | **arm64** | **NEON** on **Go 1.27+**, scalar on stable | needs the integer `VUMULL`, upstreamed in Go 1.27 (see below) |
 | loong64 / others | scalar (`hash/adler32`-equivalent) | LSX kernel not yet shipped — could not be validated in CI here |
@@ -67,26 +67,33 @@ Throughput on a 1 MiB random buffer, **native amd64** (GitHub Actions
 `ubuntu-latest`), `-count=6`, median MB/s — see
 [`.github/workflows/bench.yml`](.github/workflows/bench.yml). The dev box is
 arm64, where the amd64 kernel only runs under Rosetta (which has no AVX2), so
-the authoritative numbers come from native CI.
+the authoritative numbers come from native CI. Absolute MB/s varies with the
+runner's CPU; the meaningful figure is the per-run ratio, which is stable across
+four runs on four different runners:
 
-Indicative ratios from a local QEMU Haswell run (emulated, absolute MB/s are not
-representative — see CI for real hardware):
-
-| implementation | kind | vs stdlib |
-|---|---|---:|
-| `hash/adler32` (stdlib) | scalar | 1.00× |
-| **this package** | pure-Go SIMD (SSE3 + **AVX2** dispatch) | **~2.6×** |
-| [`mhr3/adler32-simd`](https://github.com/mhr3/adler32-simd) | pure-Go SIMD, transpiled from Chromium/zlib via gocc | ~2.9× |
+| implementation | kind | vs stdlib | vs mhr3 |
+|---|---|---:|---:|
+| `hash/adler32` (stdlib) | scalar | 1.00× | — |
+| **this package** | pure-Go SIMD (SSE3 + **AVX2** dispatch) | **12–14×** | **0.93×** |
+| [`mhr3/adler32-simd`](https://github.com/mhr3/adler32-simd) | pure-Go SIMD, transpiled from Chromium/zlib via gocc | 13–15× | 1.00× |
 
 Honest notes:
 
-- [`mhr3/adler32-simd`](https://github.com/mhr3/adler32-simd) is the prior
-  pure-Go SIMD Adler-32 (amd64 SSE3 + arm64 NEON, transpiled from Chromium/zlib
-  via [gocc](https://github.com/mmcloughlin/avo)-style tooling). In the local
-  emulated measurement it is **~13% faster** than this package's AVX2 path: its
-  hand-tuned, heavily-unrolled SSE3 kernel hides latency better than this
-  clean-room go-asmgen kernel does. Both are bit-identical to `hash/adler32`.
-  See CI for the native-hardware comparison.
+- The AVX2 kernel is unrolled 4× (128 bytes/iteration, with a deferred
+  running-`s1` carry instead of a per-block `vs2 += vs1<<5`), modelled with
+  `llvm-mca`. On the EPYC/Zen3 reference model it reaches **17.9 bytes/cycle**
+  (≈99% of the vector-ALU port ceiling), up from **14.8 bytes/cycle** for the
+  earlier single-block loop; on the Intel server models that match the CI
+  runners (`icelake-server`/`skylake-avx512`) it is predicted to **equal or
+  beat** mhr3. The 4× unroll lifts native throughput by **~40%** over the
+  earlier kernel.
+- [`mhr3/adler32-simd`](https://github.com/mhr3/adler32-simd) remains **~7%
+  faster** on native hardware (median across four runs; ours/mhr3 = 0.90–0.95),
+  despite the static model putting the two at parity. The residual gap is below
+  what `llvm-mca` resolves — mhr3's NMAX-chunked, software-pipelined kernel
+  interacts with the real out-of-order frontend in a way the static analyzer
+  idealizes away. So: **near-parity, not a beat.** Both are bit-identical to
+  `hash/adler32`.
 - Go 1.26 added `simd/archsimd`, but it is **amd64-only**; this package
   differentiates by being **multi-arch** (amd64 + riscv64 + arm64-on-1.27) and
   **Go 1.20+ compatible** for the amd64 fast path.

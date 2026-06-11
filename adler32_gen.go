@@ -73,7 +73,9 @@ func sig() abi.Signature {
 			abi.Scalar("s1", abi.Uint32), abi.Scalar("s2", abi.Uint32),
 			abi.Slice("p"), abi.Scalar("n", abi.Int64),
 		},
-		[]abi.Arg{abi.Scalar("o1", abi.Uint32), abi.Scalar("o2", abi.Uint32)},
+		// Name the two return slots ret/ret1 so go vet's asmdecl check matches
+		// the FP offsets it computes for an unnamed (uint32, uint32) result.
+		[]abi.Arg{abi.Scalar("ret", abi.Uint32), abi.Scalar("ret1", abi.Uint32)},
 	)
 }
 
@@ -148,7 +150,7 @@ func genSSE(f *emit.File) {
 		Raw("MOVO X1, X4").Raw("PSRLDQ $8, X4").Raw("PADDD X4, X1").
 		Raw("MOVO X1, X4").Raw("PSRLDQ $4, X4").Raw("PADDD X4, X1").
 		Raw("MOVD X1, DX").
-		StoreRet("AX", "o1").StoreRet("DX", "o2").Ret()
+		StoreRet("AX", "ret").StoreRet("DX", "ret1").Ret()
 	f.Add(b.Func())
 }
 
@@ -226,6 +228,6 @@ func genAVX2(f *emit.File) {
 		Raw("MOVO X1, X4").Raw("PSRLDQ $8, X4").Raw("PADDD X4, X1").
 		Raw("MOVO X1, X4").Raw("PSRLDQ $4, X4").Raw("PADDD X4, X1").
 		Raw("MOVD X1, DX").
-		StoreRet("AX", "o1").StoreRet("DX", "o2").Ret()
+		StoreRet("AX", "ret").StoreRet("DX", "ret1").Ret()
 	f.Add(b.Func())
 }

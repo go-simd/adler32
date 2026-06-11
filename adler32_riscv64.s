@@ -36,7 +36,7 @@ loop:
 done:
 	MOVWU X5, X5
 	MOVWU X6, X6
-	MOVW X5, o1+40(FP)
-	MOVW X6, o2+44(FP)
+	MOVW X5, ret+40(FP)
+	MOVW X6, ret1+44(FP)
 	RET
 

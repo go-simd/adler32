@@ -37,7 +37,7 @@ func main() {
 			abi.Scalar("s1", abi.Uint32), abi.Scalar("s2", abi.Uint32),
 			abi.Slice("p"), abi.Scalar("n", abi.Int64),
 		},
-		[]abi.Arg{abi.Scalar("o1", abi.Uint32), abi.Scalar("o2", abi.Uint32)},
+		[]abi.Arg{abi.Scalar("ret", abi.Uint32), abi.Scalar("ret1", abi.Uint32)},
 	)
 
 	// Registers: X5=s1(S), X6=s2, X7=ptr, X8=remaining n, X9=vl, X10=scratch.
@@ -85,7 +85,7 @@ func main() {
 		Label("done").
 		// truncate to 32-bit and return.
 		Raw("MOVWU X5, X5").Raw("MOVWU X6, X6").
-		StoreRet("X5", "o1").StoreRet("X6", "o2").Ret()
+		StoreRet("X5", "ret").StoreRet("X6", "ret1").Ret()
 	f.Add(b.Func())
 
 	if err := os.WriteFile("adler32_riscv64.s", []byte(f.String()), 0o644); err != nil {

@@ -78,8 +78,8 @@ done:
 	PSRLDQ $4, X4
 	PADDD X4, X1
 	MOVD X1, DX
-	MOVL AX, o1+40(FP)
-	MOVL DX, o2+44(FP)
+	MOVL AX, ret+40(FP)
+	MOVL DX, ret1+44(FP)
 	RET
 
 TEXT ·adlerAVX2(SB), NOSPLIT, $0-48
@@ -167,8 +167,8 @@ vdone:
 	PSRLDQ $4, X4
 	PADDD X4, X1
 	MOVD X1, DX
-	MOVL AX, o1+40(FP)
-	MOVL DX, o2+44(FP)
+	MOVL AX, ret+40(FP)
+	MOVL DX, ret1+44(FP)
 	RET
 
 DATA wSSE<>+0(SB)/1, $0x10

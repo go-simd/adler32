@@ -1,0 +1,58 @@
+name: ci
+on:
+  push: { branches: [main] }
+  pull_request:
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, arch: amd64 }
+          - { os: ubuntu-24.04-arm, arch: arm64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: stable }
+      - run: go vet ./...
+      - run: go test -v ./...
+      - run: go test -run '^$' -fuzz FuzzChecksum -fuzztime 20s ./...
+
+  # The arm64 NEON kernel uses the integer VMUL/VUMULL the Go assembler only
+  # gained in Go 1.27, so it builds under //go:build go1.27. Exercise it on the
+  # gotip (1.27-devel) toolchain on native arm64.
+  test-arm64-go1_27:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: stable }
+      - run: go install golang.org/dl/gotip@latest && gotip download
+      - run: gotip version
+      - run: gotip test -v ./...
+      - run: gotip test -run '^$' -fuzz FuzzChecksum -fuzztime 20s ./...
+
+  # riscv64 RVV kernel, run under QEMU user emulation with the V extension on.
+  test-riscv64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: stable }
+      - run: docker run --privileged --rm tonistiigi/binfmt --install riscv64
+      - name: build riscv64 test binary
+        run: GOOS=linux GOARCH=riscv64 go test -c -o /tmp/adler32.riscv64.test ./...
+      - name: run under QEMU (RVV, vlen 128/256/512)
+        run: |
+          for VL in 128 256 512; do
+            docker run --rm --platform linux/riscv64 \
+              -e QEMU_CPU=rv64,v=true,vlen=$VL,vext_spec=v1.0 \
+              -v /tmp/adler32.riscv64.test:/t/test.bin debian:trixie \
+              /t/test.bin -test.v -test.run 'TestChecksum|TestNew|TestPattern|TestMhr3'
+          done
+      - name: run scalar fallback (no V extension)
+        run: |
+          docker run --rm --platform linux/riscv64 -e QEMU_CPU=rv64 \
+            -v /tmp/adler32.riscv64.test:/t/test.bin debian:trixie \
+            /t/test.bin -test.run 'TestChecksum|TestNew|TestPattern'

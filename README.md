@@ -78,7 +78,8 @@ is the median of `-count=6`, and was reproduced across multiple runs):
 | CPU (CI runner) | this package (AVX2) vs stdlib | vs `mhr3` |
 |---|---:|---:|
 | **Intel Ice Lake** (Xeon 8370C) | **~14.7×** | **1.17×** (we are ~17% faster) |
-| **AMD Zen3** (EPYC 7763) | ~15× | 0.96× (mhr3 ~4% faster) |
+| **AMD Zen4** (EPYC 9V74) | ~15× | 0.99× (near-parity) |
+| **AMD Zen3** (EPYC 7763) | ~15× | 0.95× (mhr3 ~5% faster) |
 
 `mhr3` is [`mhr3/adler32-simd`](https://github.com/mhr3/adler32-simd), a pure-Go
 SIMD Adler-32 (AVX2 + SSE3 + NEON) transpiled from Chromium/zlib via gocc; it is
@@ -102,7 +103,9 @@ Honest notes:
   (ours/mhr3 ≈ 1.17). On Intel, `VPMADDWD` is restricted to ports 0/1, so the
   port relief is large — and it is exactly where the static model said it would
   land.
-- **On AMD Zen3 (EPYC 7763), `mhr3` stays ~4% ahead** (ours/mhr3 ≈ 0.96, up
+- **On AMD Zen4 (EPYC 9V74) the two are at near-parity** (ours/mhr3 ≈ 0.99, up
+  from ≈ 0.94 for the earlier kernel).
+- **On AMD Zen3 (EPYC 7763), `mhr3` stays ~5% ahead** (ours/mhr3 ≈ 0.95, up
   from ≈ 0.94). Zen3 spreads the mul-class ops across four FP ports, so the
   saved `VPMADDWD`s relieve less pressure, and `mhr3`'s tighter NMAX-chunked,
   software-pipelined 2× loop keeps a small edge that the static port model

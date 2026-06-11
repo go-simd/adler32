@@ -3,6 +3,9 @@ on:
   push: { branches: [main] }
   pull_request:
 jobs:
+  # Native amd64 (AVX2 + SSE, dispatch + Force kernels) and native arm64
+  # (the stable toolchain has no go1.27 NEON, so it runs the generic scalar
+  # fallback). The gate enforces 100% Go-statement coverage on each.
   test:
     strategy:
       fail-fast: false
@@ -18,10 +21,17 @@ jobs:
       - run: go vet ./...
       - run: go test -v ./...
       - run: go test -run '^$' -fuzz FuzzChecksum -fuzztime 20s ./...
+      - name: coverage gate (100%)
+        run: |
+          go test -covermode=atomic -coverprofile=cov.out ./...
+          pct=$(go tool cover -func=cov.out | awk '/^total:/{print $3}')
+          echo "coverage=$pct"
+          [ "$pct" = "100.0%" ] || { echo "coverage below 100%"; exit 1; }
 
   # The arm64 NEON kernel uses the integer VMUL/VUMULL the Go assembler only
   # gained in Go 1.27, so it builds under //go:build go1.27. Exercise it on the
-  # gotip (1.27-devel) toolchain on native arm64.
+  # gotip (1.27-devel) toolchain on native arm64, and gate it at 100% — this is
+  # the only job that compiles and covers adler32_arm64.go / .s.
   test-arm64-go1_27:
     runs-on: ubuntu-24.04-arm
     steps:
@@ -32,8 +42,16 @@ jobs:
       - run: gotip version
       - run: gotip test -v ./...
       - run: gotip test -run '^$' -fuzz FuzzChecksum -fuzztime 20s ./...
+      - name: coverage gate (100%, NEON)
+        run: |
+          gotip test -covermode=atomic -coverprofile=cov.out ./...
+          pct=$(gotip tool cover -func=cov.out | awk '/^total:/{print $3}')
+          echo "coverage=$pct"
+          [ "$pct" = "100.0%" ] || { echo "coverage below 100%"; exit 1; }
 
   # riscv64 RVV kernel, run under QEMU user emulation with the V extension on.
+  # The riscv64 Force test toggles hasV to also cover the no-V scalar fallback,
+  # so a single QEMU run reaches 100% (adler32_riscv64.go / .s + updateChunk).
   test-riscv64:
     runs-on: ubuntu-latest
     steps:
@@ -41,18 +59,38 @@ jobs:
       - uses: actions/setup-go@v5
         with: { go-version: stable }
       - run: docker run --privileged --rm tonistiigi/binfmt --install riscv64
-      - name: build riscv64 test binary
-        run: GOOS=linux GOARCH=riscv64 go test -c -o /tmp/adler32.riscv64.test ./...
-      - name: run under QEMU (RVV, vlen 128/256/512)
+      - name: build riscv64 cover binary
+        run: GOOS=linux GOARCH=riscv64 go test -covermode=atomic -coverpkg=./... -c -o /tmp/cov.test .
+      - name: run under QEMU (RVV) and gate (100%)
         run: |
-          for VL in 128 256 512; do
-            docker run --rm --platform linux/riscv64 \
-              -e QEMU_CPU=rv64,v=true,vlen=$VL,vext_spec=v1.0 \
-              -v /tmp/adler32.riscv64.test:/t/test.bin debian:trixie \
-              /t/test.bin -test.v -test.run 'TestChecksum|TestNew|TestPattern|TestMhr3'
-          done
-      - name: run scalar fallback (no V extension)
+          docker run --rm --platform linux/riscv64 \
+            -e QEMU_CPU=rv64,v=true,vlen=128 \
+            -v /tmp:/t debian:trixie \
+            /t/cov.test -test.v -test.coverprofile=/t/cov.out
+          go tool cover -func=/tmp/cov.out
+          pct=$(go tool cover -func=/tmp/cov.out | awk '/^total:/{print $3}')
+          echo "coverage=$pct"
+          [ "$pct" = "100.0%" ] || { echo "coverage below 100%"; exit 1; }
+
+  # loong64 has no SIMD kernel here, so it exercises the portable generic
+  # fallback (adler32_generic.go). Run it under QEMU and gate at 100% so no
+  # generic-only statement is left unmeasured.
+  test-loong64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: stable }
+      - run: docker run --privileged --rm tonistiigi/binfmt --install loong64
+      - name: build loong64 cover binary
+        run: GOOS=linux GOARCH=loong64 go test -covermode=atomic -coverpkg=./... -c -o /tmp/cov.test .
+      - name: run under QEMU (la464) and gate (100%)
         run: |
-          docker run --rm --platform linux/riscv64 -e QEMU_CPU=rv64 \
-            -v /tmp/adler32.riscv64.test:/t/test.bin debian:trixie \
-            /t/test.bin -test.run 'TestChecksum|TestNew|TestPattern'
+          docker run --rm --platform linux/loong64 \
+            -e QEMU_CPU=la464 \
+            -v /tmp:/t ghcr.io/loong64/debian:trixie \
+            /t/cov.test -test.v -test.coverprofile=/t/cov.out
+          go tool cover -func=/tmp/cov.out
+          pct=$(go tool cover -func=/tmp/cov.out | awk '/^total:/{print $3}')
+          echo "coverage=$pct"
+          [ "$pct" = "100.0%" ] || { echo "coverage below 100%"; exit 1; }

@@ -24,7 +24,7 @@ API mirrors `hash/adler32`: `Checksum` and `New` (a `hash.Hash32`).
 
 | arch | kernel | notes |
 |---|---|---|
-| **amd64** | **SSE3/SSSE3** (2× unroll) + **AVX2** (4× unroll, runtime dispatch via `x/sys/cpu`) | `PMADDUBSW` weighted sum + `PSADBW` byte sum, deferred `s1` carry |
+| **amd64** | **SSE3/SSSE3** (2× unroll) + **AVX2** (4× unroll, paired deferred-widen, runtime dispatch via `x/sys/cpu`) | `PMADDUBSW` weighted sum + `PSADBW` byte sum, deferred `s1` carry |
 | **riscv64** | **RVV** (runtime dispatch via `x/sys/cpu` `HasV`) | length-agnostic `VWMULU` weighted sum + `VWREDSUMU`; scalar fallback without V |
 | **arm64** | **NEON** on **Go 1.27+**, scalar on stable | needs the integer `VUMULL`, upstreamed in Go 1.27 (see below) |
 | loong64 / others | scalar (`hash/adler32`-equivalent) | LSX kernel not yet shipped — could not be validated in CI here |

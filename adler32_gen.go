@@ -159,6 +159,7 @@ func genSSE(f *emit.File) {
 // vcsum (Y8) before folding this block and multiply vcsum by 32 once at the end,
 // dropping the latency-bound per-block VPSLLD from the inner loop so the unrolled
 // bodies overlap. scr is a scratch ymm (Y4/Y5) used for the SAD/MADD results.
+// Used for the 0..3-block remainder, where pairing isn't worth the extra setup.
 func avx2Block(b *amd64.Builder, src, scr string) *amd64.Builder {
 	return b.
 		// vcsum += running-s1 (the s1 in effect before this block; *32 at end).
@@ -171,12 +172,40 @@ func avx2Block(b *amd64.Builder, src, scr string) *amd64.Builder {
 		Raw("VPMADDWD Y7, %s, %s", scr, scr).Raw("VPADDD %s, Y1, Y1", scr)
 }
 
+// avx2Pair emits two consecutive 32-byte blocks (srcA then srcB) for the AVX2
+// main loop, deferring the VPMADDWD widen across the pair. Each block's vs1
+// (byte-sum via VPSADBW) and vcsum carry are folded as usual, but the two
+// VPMADDUBSW weighted sums — 16-bit pairwise products, each lane <= 16065 (byte
+// 255 * weight 32 + byte 255 * weight 31), so a pair sums to <= 32130 < 2^15,
+// no signed-16 overflow — are added in 16-bit (VPADDW, latency 1) and widened to
+// 32-bit with a SINGLE VPMADDWD (latency 3) before going into vs2. That halves
+// the VPMADDWD count vs folding each block separately and shortens the vs2
+// dependency chain (one lat-3 widen per pair instead of two), which the
+// FP-port-bound Zen3 frontend cares about. acc holds the running 16-bit sum;
+// sA/sB are scratch ymm for the per-block byte-sum and the second weighted sum.
+func avx2Pair(b *amd64.Builder, srcA, srcB, acc, sA, sB string) *amd64.Builder {
+	return b.
+		// Block A: carry, byte-sum into vs1, weighted sum into the 16-bit acc.
+		Raw("VPADDD Y0, Y8, Y8").
+		Raw("VPSADBW Y2, %s, %s", srcA, sA).Raw("VPADDD %s, Y0, Y0", sA).
+		Raw("VPMADDUBSW Y6, %s, %s", srcA, acc).
+		// Block B: carry, byte-sum into vs1, weighted sum added to acc in 16-bit.
+		Raw("VPADDD Y0, Y8, Y8").
+		Raw("VPSADBW Y2, %s, %s", srcB, sB).Raw("VPADDD %s, Y0, Y0", sB).
+		Raw("VPMADDUBSW Y6, %s, %s", srcB, sB).
+		Raw("VPADDW %s, %s, %s", sB, acc, acc).
+		// Widen the pair's 16-bit weighted sum to 32-bit once and fold into vs2.
+		Raw("VPMADDWD Y7, %s, %s", acc, acc).Raw("VPADDD %s, Y1, Y1", acc)
+}
+
 // genAVX2 emits adlerAVX2: 32 bytes per block. The two 128-bit lanes carry
 // weights 32..17 (low) and 16..1 (high) so a 32-byte block's byte i gets weight
 // 32-i; vs1/vs2 are 8x32-bit ymm accumulators reduced at the end. The main loop
-// is unrolled 4x (128 bytes/iter, four independent block bodies) with a 1x
-// remainder; this matches the mhr3 unroll-and-overlap and hits the Zen3 vector
-// ALU port ceiling (~18 bytes/cycle, modelled with llvm-mca).
+// is unrolled 4x (128 bytes/iter) as two avx2Pair bodies that defer the VPMADDWD
+// widen across each block pair (see avx2Pair), with a 1x remainder. Deferring the
+// widen drops the per-iteration VPMADDWD count from four to two and shortens the
+// vs2 chain, trimming Zn3FP-port pressure (llvm-mca znver3: 5.2 -> 5.0 cyc/128B,
+// ~24.6 -> ~25.6 bytes/cycle) on the port-bound Zen3 frontend.
 func genAVX2(f *emit.File) {
 	w := f.Data("wAVX2", weights(32))
 	one := f.Data("oneAVX2", ones16(32))
@@ -201,10 +230,8 @@ func genAVX2(f *emit.File) {
 		Raw("VMOVDQU 32(SI), Y9").
 		Raw("VMOVDQU 64(SI), Y10").
 		Raw("VMOVDQU 96(SI), Y11")
-	avx2Block(b, "Y3", "Y5")
-	avx2Block(b, "Y9", "Y4")
-	avx2Block(b, "Y10", "Y5")
-	avx2Block(b, "Y11", "Y4").
+	avx2Pair(b, "Y3", "Y9", "Y5", "Y12", "Y13")
+	avx2Pair(b, "Y10", "Y11", "Y4", "Y12", "Y13").
 		Raw("ADDQ $128, SI").Raw("SUBQ $4, BX").Raw("JNZ vloop4").
 		Label("vtail").
 		// Remainder: the trailing 0..3 blocks, one at a time.

@@ -39,8 +39,8 @@ loop:
 done:
 	MOVWU R0, R0
 	MOVWU R1, R1
-	MOVW R0, o1+40(FP)
-	MOVW R1, o2+44(FP)
+	MOVW R0, ret+40(FP)
+	MOVW R1, ret1+44(FP)
 	RET
 
 DATA wlo<>+0(SB)/1, $0x10

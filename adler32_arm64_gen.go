@@ -9,11 +9,13 @@
 // VUMULL widening multiply.
 //
 // Per 16-byte block v (running s1 = S before the block):
-//   s2 += 16*S                         (cross-block carry)
-//   bytesum = Σ v                      (VUADDLV over the 16 bytes)
-//   widen v to 16-bit halves (VUXTL / VUXTL2); weighted = Σ weight_i*v_i via
-//   VUMULL/VUMULL2 against the 16-bit weight vectors {16..9} and {8..1}, summed
-//   to a scalar with VUADDLV; s2 += weighted; s1 += bytesum.
+//
+//	s2 += 16*S                         (cross-block carry)
+//	bytesum = Σ v                      (VUADDLV over the 16 bytes)
+//	widen v to 16-bit halves (VUXTL / VUXTL2); weighted = Σ weight_i*v_i via
+//	VUMULL/VUMULL2 against the 16-bit weight vectors {16..9} and {8..1}, summed
+//	to a scalar with VUADDLV; s2 += weighted; s1 += bytesum.
+//
 // The accumulation is done in GPRs per block (the multiply, not the reduction,
 // is the point of the demo), so the result is plainly identical to scalar.
 //
@@ -51,7 +53,7 @@ func main() {
 			abi.Scalar("s1", abi.Uint32), abi.Scalar("s2", abi.Uint32),
 			abi.Slice("p"), abi.Scalar("n", abi.Int64),
 		},
-		[]abi.Arg{abi.Scalar("o1", abi.Uint32), abi.Scalar("o2", abi.Uint32)},
+		[]abi.Arg{abi.Scalar("ret", abi.Uint32), abi.Scalar("ret1", abi.Uint32)},
 	)
 
 	b := arm64.NewFunc("adlerNEON", sig, 0)
@@ -83,7 +85,7 @@ func main() {
 		Raw("ADD $16, R2").Raw("SUB $1, R3").Raw("CBNZ R3, loop").
 		Label("done").
 		Raw("MOVWU R0, R0").Raw("MOVWU R1, R1").
-		StoreRet("R0", "o1").StoreRet("R1", "o2").Ret()
+		StoreRet("R0", "ret").StoreRet("R1", "ret1").Ret()
 	f.Add(b.Func())
 
 	// The integer NEON multiply used here (VUMULL) is only assemblable on Go

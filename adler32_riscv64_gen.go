@@ -7,11 +7,13 @@
 // strip length vl each iteration.
 //
 // Per strip of vl bytes (running s1 = S before the strip):
-//   s2 += vl*S                       (cross-strip carry, scalar)
-//   bytesum = Σ strip                (VWREDSUMU: e8 -> e16 sum)
-//   id = 0..vl-1 (VID); weight = vl - id (VRSUBVX), so byte j has weight vl-j
-//   widen bytes e8 -> e16 (VZEXT), weighted = Σ weight_j*byte_j via VWMULU
-//   (e16*e16 -> e32) then VREDSUM (e32); s2 += weighted; s1 += bytesum
+//
+//	s2 += vl*S                       (cross-strip carry, scalar)
+//	bytesum = Σ strip                (VWREDSUMU: e8 -> e16 sum)
+//	id = 0..vl-1 (VID); weight = vl - id (VRSUBVX), so byte j has weight vl-j
+//	widen bytes e8 -> e16 (VZEXT), weighted = Σ weight_j*byte_j via VWMULU
+//	(e16*e16 -> e32) then VREDSUM (e32); s2 += weighted; s1 += bytesum
+//
 // All accumulation into S/s2 is in GPRs, so the result is plainly identical to
 // the scalar reference. VWMULU is unsigned and widens to 32-bit, so weight*byte
 // (<= vl*255) never overflows for any VLEN.

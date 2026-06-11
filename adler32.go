@@ -80,10 +80,10 @@ func New() hash.Hash32 {
 
 type adlerHash struct{ d digest }
 
-func (h *adlerHash) Reset()            { h.d = 1 }
-func (h *adlerHash) Size() int         { return 4 }
-func (h *adlerHash) BlockSize() int    { return 4 }
-func (h *adlerHash) Sum32() uint32     { return uint32(h.d) }
+func (h *adlerHash) Reset()         { h.d = 1 }
+func (h *adlerHash) Size() int      { return 4 }
+func (h *adlerHash) BlockSize() int { return 4 }
+func (h *adlerHash) Sum32() uint32  { return uint32(h.d) }
 
 func (h *adlerHash) Write(p []byte) (int, error) {
 	h.d = update(h.d, p)

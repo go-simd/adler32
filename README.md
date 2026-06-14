@@ -93,9 +93,26 @@ is the median of `-count=6`, and was reproduced across multiple runs):
 | **AMD Zen4** (EPYC 9V74) | ~15× | 0.99× (near-parity) |
 | **AMD Zen3** (EPYC 7763) | ~15× | 0.95× (mhr3 ~5% faster) |
 
+These native-CI ratios remain authoritative **(verdict re-confirmed as of
+2026-06-14):** beat `mhr3` on Intel, near-parity on Zen. A `-count=6` re-bench on
+a QEMU x86_64 lima VM (TCG, no out-of-order modelling) put `mhr3` ahead of our
+AVX2 path (~2135 vs ~1433 MB/s) — this does **not** contradict the table; it is
+the same caveat the table already carries (Rosetta/QEMU mis-model the AVX2 vs
+SSE3 instruction mix, which is exactly why only native silicon is quoted). Both
+beat stdlib comfortably even under TCG (~1433 / ~2135 vs ~728 MB/s).
+
 `mhr3` is [`mhr3/adler32-simd`](https://github.com/mhr3/adler32-simd), a pure-Go
 SIMD Adler-32 (AVX2 + SSE3 + NEON) transpiled from Chromium/zlib via gocc; it is
 also bit-identical to `hash/adler32`, so the comparison is like for like.
+
+**arm64 note (re-bench 2026-06-14):** on **stable Go (≤ 1.26)** our arm64 NEON
+kernel is *not* compiled — it is gated `//go:build arm64 && go1.27` (it needs the
+Go 1.27 integer-NEON multiply) — so on a stable toolchain `Checksum` falls back
+to the **scalar** path and `mhr3` (which ships hand-NEON) is ~4× faster (~3.5 vs
+~14 GB/s, native M-series). This is the documented build-tag situation, not a
+regression: under **gotip / go1.27** the NEON kernel engages (CI benches it),
+which is where the arm64-vs-`mhr3` comparison is meaningful. On stable Go, prefer
+`mhr3` on arm64; on go1.27+ the gap closes.
 
 Honest notes:
 
@@ -126,6 +143,43 @@ Honest notes:
 - Go 1.26 added `simd/archsimd`, but it is **amd64-only**; this package
   differentiates by being **multi-arch** (amd64 + riscv64 + arm64-on-1.27 +
   ppc64le + s390x) and **Go 1.20+ compatible** for the amd64 fast path.
+
+### ppc64le / s390x — llvm-mca cycle-model estimate
+
+**Static analysis, NOT a hardware measurement; native perf pending real silicon.**
+No native POWER/Z runner is available and QEMU is not cycle-accurate, so the
+defensible perf signal is a cycle-model estimate. The committed 16-byte inner
+loops were extracted from `adler32_ppc64le.s` / `adler32_s390x.s` and run through
+`llvm-mca` (LLVM 22; production PowerPC + SystemZ backends):
+
+```
+llvm-mca -mtriple=powerpc64le-unknown-linux-gnu -mcpu=pwr9 <loop.s>
+llvm-mca -mtriple=s390x-unknown-linux-gnu -mcpu=z14  <loop.s>
+```
+
+The ×scalar baseline is the classic `s1 += p[i]; s2 += s1` byte loop. Because
+that loop carries `s2` across iterations, I report the **asymptotic per-iteration
+cost** (`-iterations=2000` total-cycles, which captures the loop-carried
+dependency that `Block RThroughput` alone ignores), not just RThroughput:
+
+| arch (cpu) | SIMD (16 B/iter) | est. SIMD bytes/cycle | scalar (1 B/iter) | est. scalar bytes/cycle | est. ×scalar |
+|---|---:|---:|---:|---:|---:|
+| ppc64le (pwr9) | ~14.8 cyc/iter (RThroughput ~8.3) | **~1.1** | ~2.0 cyc/byte | ~0.5 | **~2.2×** |
+| s390x (z14)    | ~5.0 cyc/iter (RThroughput ~5.0)  | **~3.2** | ~2.0 cyc/byte | ~0.5 | **~6.4×** |
+
+Honest read: on **POWER9 the VSX kernel is loop-carried-latency-bound**, not
+throughput-bound — its 14.8 cyc/iter is well above the 8.3 throughput ceiling
+because the `V10`/`V11`/`V12` accumulators form a serial add chain across
+iterations (and `VMULEUB`/`VMULOUB` even/odd widening multiplies feed it). It
+still beats scalar ~2.2×, but POWER's per-doubleword extract/accumulate caps the
+win. On **z14 the kernel runs at its throughput ceiling** (5.0 cyc/iter ==
+RThroughput): `VSUMB`/`VSUMQF` and `VMLEB`/`VMLOB` schedule cleanly with no
+cross-iteration stall, for ~6.4× scalar. Caveats: no cache/front-end/branch
+modelling; the scalar baseline is an idealised dependent-add loop (real Go scalar
+with periodic NMAX modulo would be a touch slower → ×scalar is a conservative
+lower bound). All instructions in both loops are modelled by llvm-mca (no
+unmodelable op). Ballpark ordering only — to be replaced by native `bytes/cycle`
+on real POWER9 / z14.
 
 ## Regenerating the assembly
 

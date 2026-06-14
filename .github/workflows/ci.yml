@@ -72,6 +72,56 @@ jobs:
           echo "coverage=$pct"
           [ "$pct" = "100.0%" ] || { echo "coverage below 100%"; exit 1; }
 
+  # ppc64le VSX/AltiVec kernel, run under QEMU user emulation on the power9 CPU
+  # model. The ppc64le Force test toggles hasVSX to also cover the no-SIMD scalar
+  # fallback, so a single QEMU run reaches 100% (adler32_ppc64le.go / .s +
+  # updateChunk's scalar tail). QEMU_CPU=power9 matches go-simd/matchlen's GREEN
+  # emulated job.
+  test-ppc64le:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: stable }
+      - run: docker run --privileged --rm tonistiigi/binfmt --install ppc64le
+      - name: build ppc64le cover binary
+        run: GOOS=linux GOARCH=ppc64le go test -covermode=atomic -coverpkg=./... -c -o /tmp/cov.test .
+      - name: run under QEMU (VSX) and gate (100%)
+        run: |
+          docker run --rm --platform linux/ppc64le \
+            -e QEMU_CPU=power9 \
+            -v /tmp:/t debian:trixie \
+            /t/cov.test -test.v -test.coverprofile=/t/cov.out
+          go tool cover -func=/tmp/cov.out
+          pct=$(go tool cover -func=/tmp/cov.out | awk '/^total:/{print $3}')
+          echo "coverage=$pct"
+          [ "$pct" = "100.0%" ] || { echo "coverage below 100%"; exit 1; }
+
+  # s390x vector-facility kernel (BIG-ENDIAN), run under QEMU user emulation on
+  # the default CPU model (which has the vector facility). The s390x Force test
+  # toggles hasVX to also cover the scalar fallback, so a single QEMU run reaches
+  # 100% (adler32_s390x.go / .s + updateChunk's scalar tail). QEMU_CPU=qemu
+  # matches go-simd/matchlen's GREEN emulated job (NOT z14).
+  test-s390x:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: stable }
+      - run: docker run --privileged --rm tonistiigi/binfmt --install s390x
+      - name: build s390x cover binary
+        run: GOOS=linux GOARCH=s390x go test -covermode=atomic -coverpkg=./... -c -o /tmp/cov.test .
+      - name: run under QEMU (vector facility) and gate (100%)
+        run: |
+          docker run --rm --platform linux/s390x \
+            -e QEMU_CPU=qemu \
+            -v /tmp:/t debian:trixie \
+            /t/cov.test -test.v -test.coverprofile=/t/cov.out
+          go tool cover -func=/tmp/cov.out
+          pct=$(go tool cover -func=/tmp/cov.out | awk '/^total:/{print $3}')
+          echo "coverage=$pct"
+          [ "$pct" = "100.0%" ] || { echo "coverage below 100%"; exit 1; }
+
   # loong64 has no SIMD kernel here, so it exercises the portable generic
   # fallback (adler32_generic.go). Run it under QEMU and gate at 100% so no
   # generic-only statement is left unmeasured.

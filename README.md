@@ -27,6 +27,8 @@ API mirrors `hash/adler32`: `Checksum` and `New` (a `hash.Hash32`).
 | **amd64** | **SSE3/SSSE3** (2× unroll) + **AVX2** (4× unroll, paired deferred-widen, runtime dispatch via `x/sys/cpu`) | `PMADDUBSW` weighted sum + `PSADBW` byte sum, deferred `s1` carry |
 | **riscv64** | **RVV** (runtime dispatch via `x/sys/cpu` `HasV`) | length-agnostic `VWMULU` weighted sum + `VWREDSUMU`; scalar fallback without V |
 | **arm64** | **NEON** on **Go 1.27+**, scalar on stable | needs the integer `VUMULL`, upstreamed in Go 1.27 (see below) |
+| **ppc64le** | **VSX / AltiVec** | `VMULEUB`/`VMULOUB` widening byte multiplies for the weighted sum, word-lane accumulation; qemu-validated (`power9`), native perf pending |
+| **s390x** | **vector facility** (big-endian; runtime dispatch via `x/sys/cpu` `HasVX`) | `VSUMB` byte sum + `VMLEB`/`VMLOB` weighted sum + `VSUMQF` reduce; scalar fallback without VX; qemu-validated, native perf pending |
 | loong64 / others | scalar (`hash/adler32`-equivalent) | LSX kernel not yet shipped — could not be validated in CI here |
 
 ## How it works
@@ -40,12 +42,22 @@ Following the classic zlib/Chromium SIMD Adler-32, the input is processed in
 chunks of at most `nmax = 5552` bytes, so the 16-bit lane sums cannot overflow
 before the modular reduction. Per chunk:
 
-- `s1 += Σbytes` — `PSADBW` (amd64) / `VWREDSUMU` (riscv64) / `VUADDLV` (arm64).
+- `s1 += Σbytes` — `PSADBW` (amd64) / `VWREDSUMU` (riscv64) / `VUADDLV` (arm64) /
+  `VSUMB` (s390x) / widening multiply-by-1 (ppc64le).
 - `s2 += chunkLen * s1_before + Σ weight_i·byte_i` with weights `chunkLen..1` —
   the **weighted sum** is the SIMD core: `PMADDUBSW` (amd64, bytes × weight
-  bytes → 16-bit pairwise sums), `VWMULU` (riscv64, widening multiply), or
-  `VUMULL` (arm64 NEON). The per-block `chunkLen·s1` carry is folded as a vector
-  shift-add on the running `s1` accumulator and reduced at the chunk end.
+  bytes → 16-bit pairwise sums), `VWMULU` (riscv64, widening multiply), `VUMULL`
+  (arm64 NEON), `VMULEUB`/`VMULOUB` (ppc64le, even/odd widening byte multiplies,
+  Go's ppc64 assembler exposing neither `vmsumubm` nor `vsum4ubs`), or
+  `VMLEB`/`VMLOB` (s390x). The per-block `chunkLen·s1` carry is folded as a
+  vector shift-add on the running `s1` accumulator and reduced at the chunk end.
+
+On **s390x** the platform is **big-endian**: `VL` loads byte `i` of memory into
+vector element `i`, and the descending weight vector is emitted as the bytes
+`16,15,…,1`, so weight element `i` (= `16-i`) lines up with source element `i`
+under the same load — the positional weighting is correct without any byte swap.
+The byte sum and the word reductions are position-independent (endian-neutral);
+the ascending-byte differential test is the positional check that proves it.
 
 The accumulators are reduced to scalars at each chunk boundary, where the two
 `mod 65521` reductions land at exactly the same points as `hash/adler32`, so the
@@ -112,19 +124,22 @@ Honest notes:
   idealizes away. So on Zen the result is **near-parity, slightly behind**;
   on Intel it is **a clear win.** Both remain bit-identical to `hash/adler32`.
 - Go 1.26 added `simd/archsimd`, but it is **amd64-only**; this package
-  differentiates by being **multi-arch** (amd64 + riscv64 + arm64-on-1.27) and
-  **Go 1.20+ compatible** for the amd64 fast path.
+  differentiates by being **multi-arch** (amd64 + riscv64 + arm64-on-1.27 +
+  ppc64le + s390x) and **Go 1.20+ compatible** for the amd64 fast path.
 
 ## Regenerating the assembly
 
-`adler32_amd64.s`, `adler32_arm64.s` and `adler32_riscv64.s` are committed.
-go-asmgen is a build-time tool, not a runtime dependency:
+`adler32_amd64.s`, `adler32_arm64.s`, `adler32_riscv64.s`, `adler32_ppc64le.s`
+and `adler32_s390x.s` are committed. go-asmgen is a build-time tool, not a
+runtime dependency:
 
 ```sh
-go get github.com/go-asmgen/asmgen@v0.4.0
-go run adler32_gen.go          # amd64 (SSE3 + AVX2)
-go run adler32_arm64_gen.go    # arm64 NEON (Go 1.27 VUMULL)
-go run adler32_riscv64_gen.go  # riscv64 RVV
+go get github.com/go-asmgen/asmgen@v0.5.0
+go run adler32_gen.go           # amd64 (SSE3 + AVX2)
+go run adler32_arm64_gen.go     # arm64 NEON (Go 1.27 VUMULL)
+go run adler32_riscv64_gen.go   # riscv64 RVV
+go run adler32_ppc64le_gen.go   # ppc64le VSX/AltiVec
+go run adler32_s390x_gen.go     # s390x vector facility
 go mod edit -droprequire github.com/go-asmgen/asmgen
 go mod tidy
 ```
@@ -137,10 +152,13 @@ both branches across the size table), native arm64 on the stable toolchain (the
 generic scalar fallback), native arm64 on **gotip / go1.27** (the NEON kernel,
 which compiles only under `//go:build go1.27`), riscv64 under QEMU (the RVV
 kernel, with the Force test toggling `hasV` to also cover the no-V scalar
-fallback), and loong64 under QEMU (the generic fallback). Coverage is of the Go
+fallback), ppc64le under QEMU (`power9`, the VSX kernel, Force test toggling
+`hasVSX`), s390x under QEMU (the big-endian vector kernel, Force test toggling
+`hasVX`), and loong64 under QEMU (the generic fallback). Coverage is of the Go
 statements only: the generated `.s` SIMD kernels are not measured by
 `go test -cover` — they are validated by differential tests against
-`hash/adler32` plus fuzzing (on real AVX2, RVV under QEMU, and NEON under gotip).
+`hash/adler32` plus fuzzing (on real AVX2, RVV/VSX/vector under QEMU, and NEON
+under gotip).
 
 ## License
 

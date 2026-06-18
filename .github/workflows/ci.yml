@@ -15,8 +15,8 @@ jobs:
           - { os: ubuntu-24.04-arm, arch: arm64 }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
         with: { go-version: stable }
       - run: go vet ./...
       - run: go test -v ./...
@@ -35,8 +35,8 @@ jobs:
   test-arm64-go1_27:
     runs-on: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
         with: { go-version: stable }
       - run: go install golang.org/dl/gotip@latest && gotip download
       - run: gotip version
@@ -55,8 +55,8 @@ jobs:
   test-riscv64:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
         with: { go-version: stable }
       - run: docker run --privileged --rm tonistiigi/binfmt --install riscv64
       - name: build riscv64 cover binary
@@ -80,8 +80,8 @@ jobs:
   test-ppc64le:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
         with: { go-version: stable }
       - run: docker run --privileged --rm tonistiigi/binfmt --install ppc64le
       - name: build ppc64le cover binary
@@ -105,8 +105,8 @@ jobs:
   test-s390x:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
         with: { go-version: stable }
       - run: docker run --privileged --rm tonistiigi/binfmt --install s390x
       - name: build s390x cover binary
@@ -128,8 +128,8 @@ jobs:
   test-loong64:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
         with: { go-version: stable }
       - run: docker run --privileged --rm tonistiigi/binfmt --install loong64
       - name: build loong64 cover binary

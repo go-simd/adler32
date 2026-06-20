@@ -157,6 +157,18 @@ https://portal.cfarm.net/ , VSX, Go 1.26.4, June 2026): the VSX kernel runs at
 **~2.1× the stdlib** (2591 vs 1221 MB/s), **roughly at parity with `mhr3`**.
 This supersedes the earlier cycle-model estimate for ppc64le.
 
+### riscv64 — native SpacemiT X60 measurement: a clear RVV win
+
+**riscv64 is now natively measured on a real SpacemiT X60** (RVV 1.0, GCC
+Compile Farm, Go 1.26.4, June 2026): the RVV `VWMULU`+`VWREDSUMU` weighted-sum
+kernel runs at **~2.4× the stdlib** (707 vs 298 MB/s) and **also beats `mhr3`
+(~2.4×, since `mhr3` sits at roughly stdlib speed on this core)**. Notably this
+**flips the amd64 story**: on amd64 our kernel loses to `mhr3` by ~7% on Zen3,
+but on riscv64 it is the clear winner. Caveat: the X60 is a low-power, *in-order*
+core and currently the only widely-available RVV 1.0 silicon, so absolute MB/s
+are modest — the ratio is the meaningful signal, and this arithmetic-bound
+weighted-sum kernel is exactly the shape RVV wins on.
+
 ### s390x — llvm-mca cycle-model estimate
 
 **Static analysis, NOT a hardware measurement; s390x native perf pending real

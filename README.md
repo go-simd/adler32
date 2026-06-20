@@ -22,12 +22,18 @@ API mirrors `hash/adler32`: `Checksum` and `New` (a `hash.Hash32`).
 
 ## Status per architecture
 
+SIMD acceleration covers **six SIMD targets** (amd64 AVX2, arm64 NEON, riscv64
+RVV, loong64 LSX, ppc64le VSX, s390x vector), **validated on seven
+architectures**: the seventh is **ppc64 (big-endian)** on real POWER9 silicon
+(GCC Compile Farm), where the portable scalar fallback is proven bit-exact on a
+big-endian target distinct from the s390x vector kernel.
+
 | arch | kernel | notes |
 |---|---|---|
 | **amd64** | **SSE3/SSSE3** (2× unroll) + **AVX2** (4× unroll, paired deferred-widen, runtime dispatch via `x/sys/cpu`) | `PMADDUBSW` weighted sum + `PSADBW` byte sum, deferred `s1` carry |
 | **riscv64** | **RVV** (runtime dispatch via `x/sys/cpu` `HasV`) | length-agnostic `VWMULU` weighted sum + `VWREDSUMU`; scalar fallback without V |
 | **arm64** | **NEON** on **Go 1.27+**, scalar on stable | needs the integer `VUMULL`, upstreamed in Go 1.27 (see below) |
-| **ppc64le** | **VSX / AltiVec** | `VMULEUB`/`VMULOUB` widening byte multiplies for the weighted sum, word-lane accumulation; qemu-validated (`power9`), native perf pending |
+| **ppc64le** | **VSX / AltiVec** | `VMULEUB`/`VMULOUB` widening byte multiplies for the weighted sum, word-lane accumulation; **natively measured on real POWER10** (GCC Compile Farm, VSX, Go 1.26.4, June 2026) |
 | **s390x** | **vector facility** (big-endian; runtime dispatch via `x/sys/cpu` `HasVX`) | `VSUMB` byte sum + `VMLEB`/`VMLOB` weighted sum + `VSUMQF` reduce; scalar fallback without VX; qemu-validated, native perf pending |
 | loong64 / others | scalar (`hash/adler32`-equivalent) | LSX kernel not yet shipped — could not be validated in CI here |
 
@@ -144,13 +150,21 @@ Honest notes:
   differentiates by being **multi-arch** (amd64 + riscv64 + arm64-on-1.27 +
   ppc64le + s390x) and **Go 1.20+ compatible** for the amd64 fast path.
 
-### ppc64le / s390x — llvm-mca cycle-model estimate
+### ppc64le — native POWER10 measurement
 
-**Static analysis, NOT a hardware measurement; native perf pending real silicon.**
-No native POWER/Z runner is available and QEMU is not cycle-accurate, so the
-defensible perf signal is a cycle-model estimate. The committed 16-byte inner
-loops were extracted from `adler32_ppc64le.s` / `adler32_s390x.s` and run through
-`llvm-mca` (LLVM 22; production PowerPC + SystemZ backends):
+**ppc64le is now natively measured on real POWER10 silicon** (GCC Compile Farm,
+https://portal.cfarm.net/ , VSX, Go 1.26.4, June 2026): the VSX kernel runs at
+**~2.1× the stdlib** (2591 vs 1221 MB/s), **roughly at parity with `mhr3`**.
+This supersedes the earlier cycle-model estimate for ppc64le.
+
+### s390x — llvm-mca cycle-model estimate
+
+**Static analysis, NOT a hardware measurement; s390x native perf pending real
+silicon.** No GitHub-hosted IBM Z runner is available and QEMU is not
+cycle-accurate, so the defensible perf signal for s390x is a cycle-model
+estimate (s390x remains QEMU-validated for correctness only). The committed
+16-byte inner loops were extracted from `adler32_ppc64le.s` / `adler32_s390x.s`
+and run through `llvm-mca` (LLVM 22; production PowerPC + SystemZ backends):
 
 ```
 llvm-mca -mtriple=powerpc64le-unknown-linux-gnu -mcpu=pwr9 <loop.s>
@@ -178,8 +192,10 @@ cross-iteration stall, for ~6.4× scalar. Caveats: no cache/front-end/branch
 modelling; the scalar baseline is an idealised dependent-add loop (real Go scalar
 with periodic NMAX modulo would be a touch slower → ×scalar is a conservative
 lower bound). All instructions in both loops are modelled by llvm-mca (no
-unmodelable op). Ballpark ordering only — to be replaced by native `bytes/cycle`
-on real POWER9 / z14.
+unmodelable op). Ballpark ordering only. The ppc64le figure has since been
+**superseded by a native POWER10 measurement** (~2.1× stdlib, ~parity with
+`mhr3`; see above); the s390x figure remains an estimate to be replaced by
+native `bytes/cycle` on real z14.
 
 ## Regenerating the assembly
 

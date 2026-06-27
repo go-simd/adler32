@@ -52,8 +52,17 @@ jobs:
   # riscv64 RVV kernel, run under QEMU user emulation with the V extension on.
   # The riscv64 Force test toggles hasV to also cover the no-V scalar fallback,
   # so a single QEMU run reaches 100% (adler32_riscv64.go / .s + updateChunk).
+  # VLEN is swept (128/256/512) so VLMAX-portability bugs are caught: VLMAX at
+  # SEW=8/LMUL=1 is VLEN/8, so the lanes drive VLMAX=16/32/64. A gather-sentinel
+  # sized for one VLEN (e.g. 16, fine at vlen=128) reads an in-range element at a
+  # larger VLEN (vlen=256 -> VLMAX=32, the real SpacemiT X60); the 256/512 lanes
+  # expose that class. vext_spec=v1.0 pins the ratified RVV 1.0 the kernel targets.
   test-riscv64:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        vlen: [128, 256, 512]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
@@ -64,7 +73,7 @@ jobs:
       - name: run under QEMU (RVV) and gate (100%)
         run: |
           docker run --rm --platform linux/riscv64 \
-            -e QEMU_CPU=rv64,v=true,vlen=128 \
+            -e QEMU_CPU=rv64,v=true,vlen=${{ matrix.vlen }},vext_spec=v1.0 \
             -v /tmp:/t debian:trixie \
             /t/cov.test -test.v -test.coverprofile=/t/cov.out
           go tool cover -func=/tmp/cov.out
@@ -96,6 +105,30 @@ jobs:
           pct=$(go tool cover -func=/tmp/cov.out | awk '/^total:/{print $3}')
           echo "coverage=$pct"
           [ "$pct" = "100.0%" ] || { echo "coverage below 100%"; exit 1; }
+
+  # POWER8 ISA-guard lane. test-ppc64le above runs the POWER9 model, so an ISA-3.0
+  # op illegal on POWER8 (LXVB16X/STXVB16X/CNTTZD) slips through there and only
+  # SIGILLs on a real POWER8 (cfarm112). This lane runs the SAME ppc64le test
+  # binary under QEMU_CPU=power8 (qemu-user honors QEMU_CPU; power8 == power8e ==
+  # power8_v2.0): if the VSX kernel emits an ISA-3.0 op without a POWER9 dispatch
+  # gate, it SIGILLs here. No 100% coverage gate: on POWER8 the POWER9-gated kernel
+  # takes the scalar fallback (kernel branch uncovered, ~93%); coverage is enforced
+  # by test-ppc64le. The contract here is "must not SIGILL on POWER8".
+  test-ppc64le-power8:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with: { go-version: stable }
+      - run: docker run --privileged --rm tonistiigi/binfmt --install ppc64le
+      - name: build ppc64le cover binary
+        run: GOOS=linux GOARCH=ppc64le go test -covermode=atomic -coverpkg=./... -c -o /tmp/cov.test .
+      - name: run ppc64le binary on POWER8 (must not SIGILL)
+        run: |
+          docker run --rm --platform linux/ppc64le \
+            -e QEMU_CPU=power8 \
+            -v /tmp:/t debian:trixie \
+            /t/cov.test -test.v
 
   # s390x vector-facility kernel (BIG-ENDIAN), run under QEMU user emulation on
   # the default CPU model (which has the vector facility). The s390x Force test

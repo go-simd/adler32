@@ -56,8 +56,8 @@ func weights(n int) []byte {
 	return b
 }
 
-// ones16 is the all-ones 16-bit multiplier for PMADDWD: it widens 8 signed
-// 16-bit values to 4 lanes of 32-bit while pair-adding them (×1).
+// ones16 is the all-ones 16-bit multiplier for (V)PMADDWD: it widens signed
+// 16-bit values to 32-bit lanes while pair-adding them (×1).
 func ones16(nbytes int) []byte {
 	b := make([]byte, nbytes)
 	for i := 0; i+1 < nbytes; i += 2 {
@@ -103,29 +103,31 @@ func sseBlock(b *amd64.Builder, src string) *amd64.Builder {
 		// not guaranteed 16-byte aligned (real hardware faults on MOVAPS).
 		Raw("MOVOU %s, X5", src).Raw("PSADBW X2, X5").Raw("PADDD X5, X0").
 		// vs2 += Σ weight_i*byte_i. PMADDUBSW(bytes, weights) -> 8 signed 16-bit
-		// pairwise sums (each 0..8160, non-negative). Go's amd64 assembler has no
-		// SSE PMADDWD, so widen the 8 words to 32-bit by zero-extending the low
-		// and high halves (PUNPCKLWL/PUNPCKHWL against the zero X2) into vs2.
-		// PMADDUBSW dst, src treats dst's bytes as UNSIGNED and src's as SIGNED,
-		// so the bytes (0..255) are the dst and the weights (1..16, positive) src.
+		// pairwise sums (each 0..8160, non-negative), then PMADDWD against the
+		// 16-bit ones in X3 widens-and-pair-adds them into 4 lanes of 32-bit for
+		// vs2 (Go spells SSE PMADDWD as PMADDWL). PMADDUBSW dst, src treats dst's
+		// bytes as UNSIGNED and src's as SIGNED, so the bytes (0..255) are the
+		// dst and the weights (1..16, positive) src.
 		Raw("MOVOU %s, X5", src).Raw("PMADDUBSW X6, X5").
-		Raw("MOVO X5, X4").Raw("PUNPCKLWL X2, X4").Raw("PADDD X4, X1").
-		Raw("PUNPCKHWL X2, X5").Raw("PADDD X5, X1")
+		Raw("PMADDWL X3, X5").Raw("PADDD X5, X1")
 }
 
 // genSSE emits adlerSSE: 16 bytes per block, main loop unrolled 2x with a 1x
 // remainder, carry-deferred (see sseBlock).
 func genSSE(f *emit.File) {
 	w := f.Data("wSSE", weights(16))
+	one := f.Data("oneSSE", ones16(16))
 
 	b := amd64.NewFunc("adlerSSE", sig(), 0)
 	b.LoadArg("s1", "AX").LoadArg("s2", "DX").
 		LoadArg("p_base", "SI").LoadArg("n", "CX").
-		// vs1 = {s1,0,0,0}, vs2 = {s2,0,0,0}; X2 = zero, X6 = weights, X7 = vcsum.
+		// vs1 = {s1,0,0,0}, vs2 = {s2,0,0,0}; X2 = zero, X3 = 16-bit ones,
+		// X6 = weights, X7 = vcsum.
 		Raw("MOVD AX, X0").
 		Raw("MOVD DX, X1").
 		Raw("PXOR X2, X2").
 		Raw("PXOR X7, X7").
+		Raw("MOVOU %s+0(SB), X3", one).
 		Raw("MOVOU %s+0(SB), X6", w).
 		// Main loop: 2 blocks (32 bytes) per iteration while at least 2 remain.
 		Raw("MOVQ CX, BX").Raw("ANDQ $-2, BX").Raw("JZ tail").

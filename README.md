@@ -22,6 +22,9 @@ sum = h.Sum32()
 
 API mirrors `hash/adler32`: `Checksum` and `New` (a `hash.Hash32`).
 
+The sibling package [`fletcher4`](fletcher4) is the ZFS fletcher4 block checksum
+with AVX-512, AVX2 and NEON kernels, bit-identical to OpenZFS.
+
 ## Status per architecture
 
 | arch | kernel | notes |

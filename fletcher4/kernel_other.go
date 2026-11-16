@@ -3,4 +3,4 @@
 package fletcher4
 
 // No SIMD kernel on this architecture: Sum uses the scalar loop.
-func kernels() []kernel { return nil }
+func allKernels() []kernel { return nil }

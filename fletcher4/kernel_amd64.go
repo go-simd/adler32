@@ -14,23 +14,9 @@ func sumAVX2(p *byte, nblocks int, out *[32]uint64)
 //go:noescape
 func sumAVX512(p *byte, nblocks int, out *[32]uint64)
 
-func init() {
-	switch {
-	case cpu.X86.HasAVX512F:
-		simd.name, simd.lanes, simd.blockBytes, simd.run = "avx512", 8, 64, sumAVX512
-	case cpu.X86.HasAVX2:
-		simd.name, simd.lanes, simd.blockBytes, simd.run = "avx2", 4, 32, sumAVX2
+func allKernels() []kernel {
+	return []kernel{
+		{"avx2", 4, 32, sumAVX2, cpu.X86.HasAVX2},
+		{"avx512", 8, 64, sumAVX512, cpu.X86.HasAVX512F},
 	}
-}
-
-// kernels lists every kernel this CPU can run, for tests.
-func kernels() []kernel {
-	var ks []kernel
-	if cpu.X86.HasAVX2 {
-		ks = append(ks, kernel{"avx2", 4, 32, sumAVX2})
-	}
-	if cpu.X86.HasAVX512F {
-		ks = append(ks, kernel{"avx512", 8, 64, sumAVX512})
-	}
-	return ks
 }

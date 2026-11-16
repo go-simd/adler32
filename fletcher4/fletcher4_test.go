@@ -78,6 +78,7 @@ func TestEveryKernel(t *testing.T) {
 		t.Skip("no SIMD kernel on this CPU")
 	}
 	for _, k := range ks {
+		t.Logf("kernel %s (%d lanes) runs on this CPU; Sum uses %s", k.name, k.lanes, Implementation())
 		for _, n := range []int{2 * k.blockBytes, 2*k.blockBytes + 4, 5*k.blockBytes + 28, 1000, 1 << 16, 1<<16 + 60} {
 			b := randBuf(r, n)
 			b = b[:len(b)&^3]

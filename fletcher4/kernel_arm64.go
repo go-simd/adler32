@@ -9,9 +9,6 @@ package fletcher4
 //go:noescape
 func sumNEON(p *byte, nblocks int, out *[32]uint64)
 
-func init() {
-	simd.name, simd.lanes, simd.blockBytes, simd.run = "neon", 4, 32, sumNEON
+func allKernels() []kernel {
+	return []kernel{{"neon", 4, 32, sumNEON, true}}
 }
-
-// kernels lists every kernel this CPU can run, for tests.
-func kernels() []kernel { return []kernel{{"neon", 4, 32, sumNEON}} }
